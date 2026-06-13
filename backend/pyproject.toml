@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "nexusai-backend"
+version = "1.0.0"
+description = "NexusAI - Production AI Chatbot Backend"
+requires-python = ">=3.12"
+
+[tool.ruff]
+line-length = 100
+select = ["E", "W", "F", "I", "N", "UP"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

@@ -1,0 +1,29 @@
+# ENV FILES
+.env
+.env.*
+!.env.example
+
+backend/.env
+frontend/.env
+frontend/.env.local
+
+# PYTHON
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.py[cod]
+
+.venv/
+venv/
+
+# NODE / NEXT
+node_modules/
+.next/
+
+# TYPESCRIPT
+*.tsbuildinfo
+
+# LOGS
+*.log
