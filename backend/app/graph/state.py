@@ -12,8 +12,7 @@ Fields are grouped by purpose:
 - Output: final response + citations + tool results
 - Control: error handling + retry logic + observability
 """
-from typing import Annotated, Any, Optional
-from typing_extensions import TypedDict
+from typing import Annotated, Any, Optional, TypedDict
 from langgraph.graph.message import add_messages
 from langchain_core.messages import BaseMessage
 

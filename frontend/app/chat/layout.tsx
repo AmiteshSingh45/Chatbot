@@ -23,10 +23,15 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
 
   return (
     <div className="flex h-dvh overflow-hidden" style={{ background: "var(--bg-primary)" }}>
-      <Sidebar />
+      {/* Sidebar — position relative so the expand toggle works */}
+      <div className="relative flex-shrink-0 h-full">
+        <Sidebar />
+      </div>
+
+      {/* Main content */}
       <main
-        className="flex-1 flex flex-col overflow-hidden transition-all duration-300"
-        style={{ marginLeft: sidebarOpen ? "0" : "0" }}
+        className="flex-1 flex flex-col overflow-hidden min-w-0"
+        data-sidebar-open={sidebarOpen}
       >
         {children}
       </main>

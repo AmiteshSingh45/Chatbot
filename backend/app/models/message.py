@@ -32,7 +32,7 @@ class Message(UUIDMixin, TimestampMixin, Base):
     token_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
     # Agent metadata: which agent, tools used, citations — stored as JSON string
-    metadata: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    msg_metadata: Mapped[Optional[str]] = mapped_column("metadata", Text, nullable=True)
 
     # Which agent node processed this message
     agent_used: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)

@@ -246,8 +246,8 @@ export const mcpApi = {
 // ── Conversation API ─────────────────────────────────────────────────────────
 export const conversationApi = {
   list: () => apiClient.get("/api/v1/conversations"),
-  create: (model?: string) =>
-    apiClient.post("/api/v1/conversations", { model }),
+  create: (title?: string, model?: string) =>
+    apiClient.post("/api/v1/conversations", { title, model }),
   get: (id: string) => apiClient.get(`/api/v1/conversations/${id}`),
   update: (id: string, data: { title?: string; model?: string; is_pinned?: boolean }) =>
     apiClient.patch(`/api/v1/conversations/${id}`, data),
@@ -282,3 +282,10 @@ export const authApi = {
 // ── Stop Generation ──────────────────────────────────────────────────────────
 export const stopGeneration = (threadId: string) =>
   apiClient.post(`/api/v1/chat/stop?thread_id=${threadId}`);
+
+// ── Alias for sidebar compatibility ──────────────────────────────────────────
+export const conversationsApi = {
+  ...conversationApi,
+  search: (q: string) =>
+    apiClient.get("/api/v1/conversations/search", { params: { q } }),
+};

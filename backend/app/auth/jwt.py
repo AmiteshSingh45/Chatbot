@@ -1,14 +1,14 @@
 """
 JWT authentication — access + refresh token pair.
+Stateless: no Redis storage. Refresh tokens are validated by signature only.
 Access tokens: short-lived (60 min).
-Refresh tokens: long-lived (30 days), stored in Redis for revocation support.
+Refresh tokens: long-lived (30 days).
 """
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from uuid import UUID
 
 from jose import JWTError, jwt
-from redis.asyncio import Redis
 
 from app.core.config import settings
 from app.core.exceptions import InvalidTokenError, TokenExpiredError
@@ -18,7 +18,6 @@ logger = get_logger(__name__)
 
 TOKEN_TYPE_ACCESS = "access"
 TOKEN_TYPE_REFRESH = "refresh"
-REFRESH_TOKEN_PREFIX = "refresh_token:"
 
 
 def _create_token(
@@ -39,7 +38,7 @@ def _create_token(
     return jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
 
 
-def create_access_token(user_id: UUID, email: str) -> str:
+def create_access_token(user_id, email: str) -> str:
     return _create_token(
         subject=str(user_id),
         token_type=TOKEN_TYPE_ACCESS,
@@ -48,7 +47,7 @@ def create_access_token(user_id: UUID, email: str) -> str:
     )
 
 
-def create_refresh_token(user_id: UUID) -> str:
+def create_refresh_token(user_id) -> str:
     return _create_token(
         subject=str(user_id),
         token_type=TOKEN_TYPE_REFRESH,
@@ -69,26 +68,3 @@ def decode_token(token: str) -> dict:
         raise TokenExpiredError()
     except JWTError:
         raise InvalidTokenError()
-
-
-async def store_refresh_token(redis: Redis, user_id: UUID, token: str) -> None:
-    """Store refresh token in Redis for revocation support."""
-    key = f"{REFRESH_TOKEN_PREFIX}{user_id}"
-    await redis.setex(
-        key,
-        timedelta(days=settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS),
-        token,
-    )
-
-
-async def validate_refresh_token(redis: Redis, user_id: UUID, token: str) -> bool:
-    """Validate that refresh token is in Redis (not revoked)."""
-    key = f"{REFRESH_TOKEN_PREFIX}{user_id}"
-    stored = await redis.get(key)
-    return stored == token
-
-
-async def revoke_refresh_token(redis: Redis, user_id: UUID) -> None:
-    """Revoke a refresh token (logout)."""
-    key = f"{REFRESH_TOKEN_PREFIX}{user_id}"
-    await redis.delete(key)

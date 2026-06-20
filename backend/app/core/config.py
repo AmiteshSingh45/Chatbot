@@ -24,13 +24,13 @@ class Settings(BaseSettings):
 
     # --- App ---
     APP_ENV: Literal["development", "staging", "production"] = "development"
-    APP_NAME: str = "NexusAI"
+    APP_NAME: str = "AI Chatbot"
     APP_VERSION: str = "2.0.0"
     DEBUG: bool = True
     SECRET_KEY: str = "change-this-secret-key-in-production"
 
     # --- SQLite Database ---
-    SQLITE_PATH: str = "nexusai.db"
+    SQLITE_PATH: str = "chatbot.db"
 
     @property
     def DATABASE_URL(self) -> str:
@@ -41,7 +41,7 @@ class Settings(BaseSettings):
         return f"sqlite:///{self.SQLITE_PATH}"
 
     # --- LangGraph SQLite Checkpointer ---
-    LANGGRAPH_CHECKPOINT_DB: str = "nexusai_checkpoints.db"
+    LANGGRAPH_CHECKPOINT_DB: str = "chatbot_checkpoints.db"
 
     # --- FAISS Vector Store ---
     FAISS_INDEX_DIR: str = "faiss_indexes"
@@ -79,38 +79,40 @@ class Settings(BaseSettings):
     LANGCHAIN_TRACING_V2: bool = False
     LANGCHAIN_ENDPOINT: str = "https://api.smith.langchain.com"
     LANGCHAIN_API_KEY: str = ""
-    LANGCHAIN_PROJECT: str = "nexusai-development"
+    LANGCHAIN_PROJECT: str = "chatbot-development"
 
     # --- Web Search (Free: DuckDuckGo default, Tavily optional) ---
     TAVILY_API_KEY: str = ""
-    USE_TAVILY: bool = False  # set True if you have Tavily key
+    USE_TAVILY: bool = False
 
-    # --- CORS ---
-    ALLOWED_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:3001"]
+    # --- CORS — stored as plain string, parsed into list ---
+    # In .env use comma-separated: ALLOWED_ORIGINS=http://localhost:3000,http://localhost:3001
+    ALLOWED_ORIGINS_STR: str = "http://localhost:3000,http://localhost:3001"
     FRONTEND_URL: str = "http://localhost:3000"
 
-    @field_validator("ALLOWED_ORIGINS", mode="before")
-    @classmethod
-    def parse_origins(cls, v: str | list[str]) -> list[str]:
-        if isinstance(v, str):
-            return [origin.strip() for origin in v.split(",")]
-        return v
+    @property
+    def ALLOWED_ORIGINS(self) -> list[str]:
+        """Parse ALLOWED_ORIGINS from comma-separated string."""
+        raw = self.ALLOWED_ORIGINS_STR.strip()
+        if not raw:
+            return ["http://localhost:3000"]
+        return [o.strip() for o in raw.split(",") if o.strip()]
 
     # --- Rate Limiting (in-memory, no Redis) ---
     RATE_LIMIT_REQUESTS: int = 60
     RATE_LIMIT_WINDOW: int = 60  # seconds
 
     # --- MCP Configuration ---
-    MCP_CONFIG_PATH: str = "mcp_config.json"  # path to MCP servers config JSON
-    MCP_TIMEOUT: int = 30  # seconds per MCP call
+    MCP_CONFIG_PATH: str = "mcp_config.json"
+    MCP_TIMEOUT: int = 30
 
     # --- Memory System ---
-    MEMORY_MAX_RESULTS: int = 5       # top-k memories to inject per request
-    MEMORY_SIMILARITY_THRESHOLD: float = 0.3  # min cosine sim to retrieve
+    MEMORY_MAX_RESULTS: int = 5
+    MEMORY_SIMILARITY_THRESHOLD: float = 0.3
     MEMORY_EMBEDDING_MODEL: str = "all-MiniLM-L6-v2"
 
     # --- Reflection ---
-    REFLECTION_SCORE_THRESHOLD: float = 0.7   # retry if below this
+    REFLECTION_SCORE_THRESHOLD: float = 0.7
     REFLECTION_MAX_RETRIES: int = 2
 
     @property

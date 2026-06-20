@@ -1,35 +1,34 @@
 "use client";
-/**
- * Chat Thread Page — full SSE streaming with AgentSteps + HITL.
- * Uses SSE (fetch-based) instead of WebSocket for simpler integration.
- * Handles: streaming tokens, agent steps, HITL interrupts, stop generation.
- */
+
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
+import { AlertCircle, Eye, EyeOff, Sparkles, ChevronLeft } from "lucide-react";
 
 import MessageBubble from "@/components/chat/MessageBubble";
+import SkeletonMessage from "@/components/chat/SkeletonMessage";
 import Composer from "@/components/chat/Composer";
 import AgentSteps from "@/components/chat/AgentSteps";
 import HumanApproval from "@/components/chat/HumanApproval";
 import ModelSelector from "@/components/ui/ModelSelector";
+import { Button } from "@/components/ui/Button";
 
 import {
-  startSSEStream,
-  resumeHITL,
-  stopGeneration,
-  conversationApi,
+  startSSEStream, resumeHITL, stopGeneration, conversationApi,
 } from "@/lib/api";
-
 import {
-  useAuthStore,
-  useChatStore,
-  useAgentStepsStore,
-  useHITLStore,
-  useSettingsStore,
+  useAuthStore, useChatStore, useAgentStepsStore,
+  useHITLStore, useSettingsStore,
 } from "@/store";
-
 import type { AgentStep, HITLRequest, Message } from "@/types";
+
+// ── Sample prompts for empty state ────────────────────────────────────────────
+const QUICK_PROMPTS = [
+  { emoji: "🔍", text: "Search the web for latest LLM research" },
+  { emoji: "📄", text: "Analyze my uploaded document" },
+  { emoji: "💻", text: "Write a Python data pipeline script" },
+  { emoji: "🧠", text: "What do you remember about me?" },
+];
 
 export default function ChatThreadPage() {
   const params = useParams();
@@ -38,62 +37,58 @@ export default function ChatThreadPage() {
 
   const { isAuthenticated } = useAuthStore();
   const {
-    messages,
-    isStreaming,
-    streamingContent,
-    addMessage,
-    appendStreamToken,
-    finalizeStream,
-    setIsStreaming,
-    setMessages,
-    setActiveConversation,
+    messages, isStreaming, streamingContent,
+    addMessage, appendStreamToken, finalizeStream,
+    setIsStreaming, setMessages, setActiveConversation,
   } = useChatStore();
-
   const { steps, addStep, clearSteps } = useAgentStepsStore();
   const { pendingRequest, setPendingRequest, clearRequest } = useHITLStore();
   const { settings } = useSettingsStore();
 
   const [conversationId, setConversationId] = useState<string | null>(null);
+  const [convTitle, setConvTitle] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
-  const abortControllerRef = useRef<AbortController | null>(null);
+  const [loading, setLoading] = useState(true);
+  const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
 
-  // ── Auth guard ──────────────────────────────────────────────────────────
+  // ── Auth guard ──────────────────────────────────────────────────────────────
   useEffect(() => {
-    if (!isAuthenticated) {
-      router.replace("/auth/login");
-    }
+    if (!isAuthenticated) router.replace("/auth/login");
   }, [isAuthenticated, router]);
 
-  // ── Load conversation ────────────────────────────────────────────────────
+  // ── Load conversation ────────────────────────────────────────────────────────
   useEffect(() => {
     if (!threadId) return;
+    setLoading(true);
 
     const load = async () => {
       try {
-        // Find conversation by thread_id
         const res = await conversationApi.list();
-        const conv = res.data.conversations?.find(
-          (c: any) => c.thread_id === threadId
-        );
-
-        if (!conv) {
-          router.replace("/chat");
-          return;
-        }
+        const conv = res.data.conversations?.find((c: any) => c.thread_id === threadId);
+        if (!conv) { router.replace("/chat"); return; }
 
         setConversationId(conv.id);
+        setConvTitle(conv.title || "Chat");
         setActiveConversation(conv.id);
 
-        // Load messages
         const msgRes = await conversationApi.messages(conv.id);
         setMessages(msgRes.data.messages || []);
+
+        // Handle starter prompt from session storage
+        const starter = sessionStorage.getItem("starter_prompt");
+        if (starter) {
+          sessionStorage.removeItem("starter_prompt");
+          setTimeout(() => handleSend(starter, []), 200);
+        }
       } catch (e) {
         console.error("Failed to load conversation:", e);
+      } finally {
+        setLoading(false);
       }
     };
     load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [threadId]);
 
   // ── Auto-scroll ───────────────────────────────────────────────────────────
@@ -102,99 +97,52 @@ export default function ChatThreadPage() {
   }, [messages, streamingContent, steps]);
 
   // ── Send message ──────────────────────────────────────────────────────────
-  const sendMessage = useCallback(
-    async (content: string, fileIds: string[]) => {
-      if (!threadId || isStreaming) return;
-      setError(null);
+  const handleSend = useCallback(async (content: string, fileIds: string[]) => {
+    if (!threadId || isStreaming) return;
+    setError(null);
 
-      // Add user message to UI
-      const userMsg: Message = {
-        id: crypto.randomUUID(),
-        role: "user",
-        content,
-        created_at: new Date().toISOString(),
-      };
-      addMessage(userMsg);
-      setIsStreaming(true);
-      clearSteps();
+    const userMsg: Message = {
+      id: crypto.randomUUID(),
+      role: "user",
+      content,
+      created_at: new Date().toISOString(),
+    };
+    addMessage(userMsg);
+    setIsStreaming(true);
+    clearSteps();
 
-      try {
-        const controller = await startSSEStream(
-          threadId,
-          content,
-          fileIds,
-          settings.model,
-          {
-            onToken: (token) => {
-              appendStreamToken(token);
-            },
+    try {
+      const controller = await startSSEStream(
+        threadId, content, fileIds, settings.model,
+        {
+          onToken: (token) => appendStreamToken(token),
+          onAgentStep: (step: AgentStep) => { if (settings.showAgentSteps) addStep(step); },
+          onHITL: (action, args, tid) => {
+            setPendingRequest({ thread_id: tid, action, args, timestamp: new Date().toISOString() });
+            setIsStreaming(false);
+          },
+          onDone: (metadata) => { finalizeStream(streamingContent || "", metadata); setIsStreaming(false); },
+          onError: (message) => { setError(message); setIsStreaming(false); },
+          onStopped: () => { finalizeStream(streamingContent || "[Generation stopped]"); setIsStreaming(false); },
+        }
+      );
+      abortRef.current = controller;
+    } catch (e: any) {
+      setError(e.message || "Failed to start stream");
+      setIsStreaming(false);
+    }
+  }, [
+    threadId, isStreaming, settings.model, settings.showAgentSteps, streamingContent,
+    addMessage, setIsStreaming, appendStreamToken, finalizeStream, clearSteps, addStep, setPendingRequest,
+  ]);
 
-            onAgentStep: (step: AgentStep) => {
-              if (settings.showAgentSteps) {
-                addStep(step);
-              }
-            },
-
-            onHITL: (action, args, tid) => {
-              const req: HITLRequest = {
-                thread_id: tid,
-                action,
-                args,
-                timestamp: new Date().toISOString(),
-              };
-              setPendingRequest(req);
-              setIsStreaming(false);
-            },
-
-            onDone: (metadata) => {
-              finalizeStream(streamingContent || "", metadata);
-              setIsStreaming(false);
-            },
-
-            onError: (message) => {
-              setError(message);
-              setIsStreaming(false);
-            },
-
-            onStopped: () => {
-              finalizeStream(streamingContent || "[Generation stopped]");
-              setIsStreaming(false);
-            },
-          }
-        );
-        abortControllerRef.current = controller;
-      } catch (e: any) {
-        setError(e.message || "Failed to start stream");
-        setIsStreaming(false);
-      }
-    },
-    [
-      threadId,
-      isStreaming,
-      settings.model,
-      settings.showAgentSteps,
-      streamingContent,
-      addMessage,
-      setIsStreaming,
-      appendStreamToken,
-      finalizeStream,
-      clearSteps,
-      addStep,
-      setPendingRequest,
-    ]
-  );
-
-  // ── Stop generation ───────────────────────────────────────────────────────
+  // ── Stop ──────────────────────────────────────────────────────────────────
   const handleStop = useCallback(async () => {
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-    }
-    if (threadId) {
-      await stopGeneration(threadId);
-    }
+    abortRef.current?.abort();
+    if (threadId) await stopGeneration(threadId);
   }, [threadId]);
 
-  // ── HITL handlers ─────────────────────────────────────────────────────────
+  // ── HITL ──────────────────────────────────────────────────────────────────
   const handleHITLApprove = useCallback(async () => {
     if (!pendingRequest) return;
     clearRequest();
@@ -203,23 +151,17 @@ export default function ChatThreadPage() {
 
     try {
       const controller = await resumeHITL(
-        pendingRequest.thread_id,
-        "approved",
+        pendingRequest.thread_id, "approved",
         {
           onToken: appendStreamToken,
           onAgentStep: (step) => settings.showAgentSteps && addStep(step),
           onHITL: () => {},
-          onDone: (meta) => {
-            finalizeStream(streamingContent || "", meta);
-            setIsStreaming(false);
-          },
-          onError: (msg) => {
-            setError(msg);
-            setIsStreaming(false);
-          },
+          onDone: (meta) => { finalizeStream(streamingContent || "", meta); setIsStreaming(false); },
+          onError: (msg) => { setError(msg); setIsStreaming(false); },
+          onStopped: () => {},
         }
       );
-      abortControllerRef.current = controller;
+      abortRef.current = controller;
     } catch (e: any) {
       setError(e.message);
       setIsStreaming(false);
@@ -232,7 +174,7 @@ export default function ChatThreadPage() {
       onToken: () => {},
       onAgentStep: () => {},
       onHITL: () => {},
-      onDone: (meta) => {
+      onDone: () => {
         addMessage({
           id: crypto.randomUUID(),
           role: "assistant",
@@ -241,162 +183,275 @@ export default function ChatThreadPage() {
         });
       },
       onError: () => {},
+      onStopped: () => {},
     });
     clearRequest();
   }, [pendingRequest, clearRequest, addMessage]);
 
-  // ── Render ────────────────────────────────────────────────────────────────
   return (
-    <div className="flex flex-col h-full" ref={containerRef}>
-      {/* Top bar */}
+    <div className="flex flex-col h-full">
+      {/* ── Top bar ────────────────────────────────────────────────────────── */}
       <div
-        className="flex items-center justify-between px-4 py-3 border-b border-white/5"
-        style={{ background: "rgba(8,8,12,0.8)", backdropFilter: "blur(12px)" }}
+        className="flex items-center justify-between px-4 py-3 flex-shrink-0"
+        style={{
+          background: "rgba(8,8,14,0.90)",
+          backdropFilter: "blur(16px)",
+          borderBottom: "1px solid var(--border-faint)",
+        }}
       >
-        <div className="flex items-center gap-3">
-          <div className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
-          <span className="text-sm text-white/60 font-medium">
-            Thread: <span className="text-white/40 font-mono text-xs">{threadId?.slice(0, 16)}…</span>
-          </span>
+        <div className="flex items-center gap-3 min-w-0">
+          {/* Back button */}
+          <button
+            onClick={() => router.push("/chat")}
+            className="btn-ghost p-1.5 rounded-xl flex-shrink-0"
+            title="All conversations"
+            aria-label="Back to chat list"
+          >
+            <ChevronLeft className="w-4 h-4" />
+          </button>
+
+          {/* Live status dot */}
+          <motion.span
+            animate={isStreaming ? { scale: [1, 1.3, 1], opacity: [0.8, 1, 0.8] } : {}}
+            transition={{ duration: 1.5, repeat: Infinity }}
+            className="h-2 w-2 rounded-full flex-shrink-0"
+            style={{
+              background: isStreaming ? "#10b981" : "var(--border-strong)",
+              boxShadow: isStreaming ? "0 0 8px #10b981" : "none",
+              transition: "background 0.3s, box-shadow 0.3s",
+            }}
+          />
+          <h2 className="text-sm font-semibold truncate max-w-[200px] md:max-w-xs"
+            style={{ color: "var(--text-primary)" }}>
+            {convTitle || "Chat"}
+          </h2>
         </div>
+
         <div className="flex items-center gap-2">
           <ModelSelector />
-          {/* Agent Steps toggle */}
+          {/* Agent steps toggle */}
           <button
             id="toggle-agent-steps"
             onClick={() => useSettingsStore.getState().updateSettings({
               showAgentSteps: !settings.showAgentSteps
             })}
-            className={`text-xs px-2.5 py-1.5 rounded-lg border transition-all duration-200 ${
-              settings.showAgentSteps
-                ? "border-purple-500/30 text-purple-400 bg-purple-500/10"
-                : "border-white/10 text-white/40 bg-transparent"
-            }`}
+            title={settings.showAgentSteps ? "Hide agent steps" : "Show agent steps"}
+            className="p-2 rounded-xl transition-all duration-150 btn-ghost"
+            style={{
+              color: settings.showAgentSteps ? "var(--accent-purple)" : "var(--text-muted)",
+              background: settings.showAgentSteps ? "rgba(139,92,246,0.08)" : "transparent",
+              border: settings.showAgentSteps ? "1px solid rgba(139,92,246,0.16)" : "1px solid transparent",
+            }}
           >
-            🔍 Steps
+            {settings.showAgentSteps ? (
+              <Eye className="w-4 h-4" />
+            ) : (
+              <EyeOff className="w-4 h-4" />
+            )}
           </button>
         </div>
       </div>
 
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-4 py-6 space-y-2">
-        {/* Empty state */}
-        {messages.length === 0 && !isStreaming && (
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="flex flex-col items-center justify-center h-full text-center py-16"
-          >
-            <div
-              className="mb-6 h-20 w-20 rounded-3xl flex items-center justify-center text-4xl"
-              style={{
-                background: "linear-gradient(135deg, rgba(139,92,246,0.2) 0%, rgba(59,130,246,0.2) 100%)",
-                border: "1px solid rgba(139,92,246,0.2)",
-              }}
-            >
-              ⚡
-            </div>
-            <h2 className="text-2xl font-bold text-white/80 mb-2">Ready to assist</h2>
-            <p className="text-white/40 text-sm max-w-sm">
-              I have access to web search, document analysis, code assistance, 
-              memory recall, and more. What can I help you with?
-            </p>
-            <div className="mt-6 flex flex-wrap gap-2 justify-center">
-              {[
-                "🔍 Search the web for LLM research",
-                "📄 Analyze my uploaded document",
-                "💻 Write a Python script",
-                "🧠 What do you know about me?",
-              ].map((prompt) => (
-                <button
-                  key={prompt}
-                  onClick={() => sendMessage(prompt.replace(/^[^\s]+ /, ""), [])}
-                  className="px-3 py-1.5 rounded-xl text-xs text-white/50 border border-white/10
-                             hover:border-purple-500/40 hover:text-white/80 transition-all duration-200"
-                >
-                  {prompt}
-                </button>
-              ))}
-            </div>
-          </motion.div>
-        )}
+      {/* ── Messages ───────────────────────────────────────────────────────── */}
+      <div className="flex-1 overflow-y-auto">
+        <div className="chat-max-w px-4 md:px-6 py-6">
 
-        {/* Message list */}
-        <AnimatePresence initial={false}>
-          {messages.map((msg, i) => (
+          {/* Loading skeletons */}
+          {loading && (
+            <div className="space-y-6">
+              <SkeletonMessage />
+              <SkeletonMessage isUser />
+              <SkeletonMessage />
+            </div>
+          )}
+
+          {/* Empty state */}
+          {!loading && messages.length === 0 && !isStreaming && (
             <motion.div
-              key={msg.id}
-              initial={{ opacity: 0, y: 10 }}
+              initial={{ opacity: 0, y: 16 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.2 }}
+              className="flex flex-col items-center justify-center py-24 text-center"
             >
-              <MessageBubble message={msg} />
-            </motion.div>
-          ))}
-        </AnimatePresence>
+              {/* Ambient glow */}
+              <div
+                className="absolute pointer-events-none"
+                style={{
+                  width: 280,
+                  height: 280,
+                  borderRadius: "50%",
+                  background: "radial-gradient(circle, rgba(139,92,246,0.07) 0%, transparent 70%)",
+                  animation: "ambient-pulse 5s ease-in-out infinite",
+                }}
+              />
 
-        {/* Agent Steps (shown during streaming) */}
-        <AnimatePresence>
-          {(isStreaming || steps.length > 0) && settings.showAgentSteps && (
-            <AgentSteps steps={steps} isStreaming={isStreaming} />
-          )}
-        </AnimatePresence>
+              <motion.div
+                animate={{ y: [0, -6, 0] }}
+                transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
+                className="relative mb-6"
+              >
+                <div
+                  className="w-16 h-16 rounded-3xl flex items-center justify-center text-2xl relative"
+                  style={{
+                    background: "linear-gradient(135deg, rgba(139,92,246,0.15) 0%, rgba(59,130,246,0.12) 100%)",
+                    border: "1px solid rgba(139,92,246,0.20)",
+                    boxShadow: "0 0 40px rgba(139,92,246,0.10)",
+                  }}
+                >
+                  <Sparkles className="w-7 h-7" style={{ color: "var(--accent-purple-light)" }} />
+                </div>
+              </motion.div>
 
-        {/* HITL Approval Card */}
-        <AnimatePresence>
-          {pendingRequest && (
-            <HumanApproval
-              request={pendingRequest}
-              onApprove={handleHITLApprove}
-              onReject={handleHITLReject}
-            />
-          )}
-        </AnimatePresence>
-
-        {/* Streaming content */}
-        {isStreaming && streamingContent && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            className="flex justify-start"
-          >
-            <div
-              className="max-w-[80%] rounded-2xl rounded-tl-sm px-5 py-4"
-              style={{
-                background: "linear-gradient(135deg, rgba(20,20,30,0.9) 0%, rgba(25,25,40,0.9) 100%)",
-                border: "1px solid rgba(255,255,255,0.06)",
-              }}
-            >
-              <p className="text-white/90 text-sm leading-relaxed whitespace-pre-wrap">
-                {streamingContent}
-                <span className="inline-block ml-0.5 h-4 w-0.5 bg-purple-400 animate-pulse align-text-bottom" />
+              <h2 className="text-xl font-bold mb-2" style={{ color: "var(--text-primary)" }}>
+                Ready to assist
+              </h2>
+              <p className="text-sm max-w-xs leading-relaxed mb-7" style={{ color: "var(--text-secondary)" }}>
+                I have access to web search, document analysis, code assistance,
+                memory recall, and more.
               </p>
+
+              {/* Quick prompt pills */}
+              <div className="flex flex-wrap gap-2 justify-center max-w-md">
+                {QUICK_PROMPTS.map(({ emoji, text }) => (
+                  <button
+                    key={text}
+                    onClick={() => handleSend(text, [])}
+                    className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs transition-all duration-150"
+                    style={{
+                      border: "1px solid var(--border-subtle)",
+                      color: "var(--text-tertiary)",
+                      background: "var(--bg-elevated)",
+                    }}
+                    onMouseEnter={e => {
+                      (e.currentTarget as HTMLElement).style.borderColor = "rgba(139,92,246,0.30)";
+                      (e.currentTarget as HTMLElement).style.color = "var(--text-secondary)";
+                      (e.currentTarget as HTMLElement).style.background = "rgba(139,92,246,0.05)";
+                    }}
+                    onMouseLeave={e => {
+                      (e.currentTarget as HTMLElement).style.borderColor = "var(--border-subtle)";
+                      (e.currentTarget as HTMLElement).style.color = "var(--text-tertiary)";
+                      (e.currentTarget as HTMLElement).style.background = "var(--bg-elevated)";
+                    }}
+                  >
+                    <span>{emoji}</span>
+                    {text}
+                  </button>
+                ))}
+              </div>
+            </motion.div>
+          )}
+
+          {/* Message list */}
+          {!loading && (
+            <div className="space-y-6">
+              <AnimatePresence initial={false}>
+                {messages.map((msg) => (
+                  <motion.div
+                    key={msg.id}
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.2, ease: [0.4, 0, 0.2, 1] }}
+                  >
+                    <MessageBubble message={msg} />
+                  </motion.div>
+                ))}
+              </AnimatePresence>
+
+              {/* Agent steps */}
+              <AnimatePresence>
+                {(isStreaming || steps.length > 0) && settings.showAgentSteps && (
+                  <AgentSteps steps={steps} isStreaming={isStreaming} />
+                )}
+              </AnimatePresence>
+
+              {/* HITL */}
+              <AnimatePresence>
+                {pendingRequest && (
+                  <HumanApproval
+                    request={pendingRequest}
+                    onApprove={handleHITLApprove}
+                    onReject={handleHITLReject}
+                  />
+                )}
+              </AnimatePresence>
+
+              {/* Streaming content */}
+              {isStreaming && streamingContent && (
+                <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+                  <MessageBubble
+                    message={{
+                      id: "streaming",
+                      role: "assistant",
+                      content: streamingContent,
+                      created_at: new Date().toISOString(),
+                    }}
+                    isStreaming
+                  />
+                </motion.div>
+              )}
+
+              {/* Streaming dots (no text yet) */}
+              {isStreaming && !streamingContent && !pendingRequest && (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  className="flex items-center gap-3.5"
+                >
+                  <div
+                    className="w-8 h-8 rounded-xl flex-shrink-0 flex items-center justify-center"
+                    style={{
+                      background: "linear-gradient(135deg, rgba(124,58,237,0.18) 0%, rgba(59,130,246,0.12) 100%)",
+                      border: "1px solid rgba(139,92,246,0.22)",
+                      boxShadow: "0 0 12px rgba(139,92,246,0.18)",
+                    }}
+                  >
+                    <Sparkles className="w-3.5 h-3.5 animate-sparkle" style={{ color: "var(--accent-purple-light)" }} />
+                  </div>
+                  <div className="flex gap-1.5 py-1">
+                    {[0, 1, 2].map(i => (
+                      <div
+                        key={i}
+                        className="stream-dot"
+                        style={{ animationDelay: `${i * 0.16}s` }}
+                      />
+                    ))}
+                  </div>
+                </motion.div>
+              )}
+
+              {/* Error */}
+              {error && (
+                <motion.div
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="flex items-center gap-2.5 mx-auto max-w-sm rounded-2xl px-4 py-3 text-sm"
+                  style={{
+                    border: "1px solid rgba(244,63,94,0.20)",
+                    background: "rgba(244,63,94,0.06)",
+                    color: "#fb7185",
+                    backdropFilter: "blur(8px)",
+                  }}
+                >
+                  <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                  {error}
+                </motion.div>
+              )}
+
+              <div ref={bottomRef} />
             </div>
-          </motion.div>
-        )}
-
-        {/* Error */}
-        {error && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            className="mx-auto max-w-sm rounded-xl border border-red-500/20 bg-red-500/5 px-4 py-3 text-sm text-red-400 text-center"
-          >
-            ⚠️ {error}
-          </motion.div>
-        )}
-
-        <div ref={bottomRef} />
+          )}
+        </div>
       </div>
 
-      {/* Composer */}
-      <div className="px-4 pb-4 pt-2">
-        <Composer
-          onSend={sendMessage}
-          onStop={handleStop}
-          isStreaming={isStreaming}
-          conversationId={conversationId}
-        />
+      {/* ── Composer ───────────────────────────────────────────────────────── */}
+      <div className="flex-shrink-0 px-4 pb-5 pt-3">
+        <div className="chat-max-w">
+          <Composer
+            onSend={handleSend}
+            onStop={handleStop}
+            isStreaming={isStreaming}
+            conversationId={conversationId}
+          />
+        </div>
       </div>
     </div>
   );

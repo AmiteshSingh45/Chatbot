@@ -25,6 +25,7 @@ langchain==0.3.25
 langchain-core==0.3.58
 langchain-community==0.3.23
 langchain-groq==0.3.2
+langchain-text-splitters==0.3.8
 langgraph==0.4.8
 langgraph-checkpoint-sqlite==2.0.10
 langsmith==0.3.43
@@ -33,9 +34,9 @@ langsmith==0.3.43
 langchain-mcp-adapters==0.1.7
 
 # --- Vector / Embeddings (local, no server) ---
-faiss-cpu==1.11.0
-sentence-transformers==3.3.1
-numpy==1.26.4
+faiss-cpu>=1.7.4
+sentence-transformers>=3.3.1
+numpy>=2.1.0
 
 # --- File Processing ---
 pypdf==5.1.0
@@ -45,8 +46,9 @@ aiofiles==24.1.0
 python-magic-bin==0.4.14; sys_platform == "win32"
 python-magic==0.4.27; sys_platform != "win32"
 
-# --- Web Search (Free) ---
+# --- Web Search (Free primary, Tavily optional) ---
 duckduckgo-search==7.5.3
+tavily-python==0.5.0
 
 # --- Academic Search ---
 arxiv==2.1.3
