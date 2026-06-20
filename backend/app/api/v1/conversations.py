@@ -58,7 +58,7 @@ async def list_conversations(
         limit=limit,
         include_archived=include_archived,
     )
-    return [_serialize(c) for c in convs]
+    return {"conversations": [_serialize(c) for c in convs], "total": len(convs)}
 
 
 @router.post("", status_code=201)
@@ -68,14 +68,19 @@ async def create_conversation(
     db: AsyncSession = Depends(get_db),
 ):
     """Create a new conversation thread."""
-    repo = ConversationRepository(db)
-    thread_id = str(uuid.uuid4())  # LangGraph thread ID
-    conv = await repo.create(
-        user_id=current_user.id,
-        title=body.title,
+    from app.models.conversation import Conversation
+    import uuid
+    thread_id = str(uuid.uuid4())
+    conv = Conversation(
+        id=str(uuid.uuid4()),
+        user_id=str(current_user.id),
         thread_id=thread_id,
+        title=body.title,
         model=body.model,
     )
+    db.add(conv)
+    await db.commit()
+    await db.refresh(conv)
     return _serialize(conv)
 
 
@@ -106,6 +111,7 @@ async def get_conversation(
         raise PermissionDeniedError()
 
     data = _serialize(conv)
+    import json
     data["messages"] = [
         {
             "id": str(m.id),
@@ -114,11 +120,55 @@ async def get_conversation(
             "agent_used": m.agent_used,
             "token_count": m.token_count,
             "metadata": m.metadata,
+            "citations": json.loads(m.citations) if m.citations else [],
+            "agent_steps": json.loads(m.agent_steps) if getattr(m, "agent_steps", None) else [],
             "created_at": m.created_at.isoformat(),
         }
         for m in conv.messages
     ]
     return data
+
+
+@router.get("/{conversation_id}/messages")
+async def get_conversation_messages(
+    conversation_id: str,
+    limit: int = Query(50, ge=1, le=200),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get messages for a conversation (paginated)."""
+    import json
+    from app.models.message import Message
+    from sqlalchemy import select
+    repo = ConversationRepository(db)
+    conv = await repo.get_by_id(conversation_id)
+    if not conv:
+        raise NotFoundError("Conversation", conversation_id)
+    if str(conv.user_id) != str(current_user.id):
+        raise PermissionDeniedError()
+
+    result = await db.execute(
+        select(Message)
+        .where(Message.conversation_id == conversation_id)
+        .order_by(Message.created_at.asc())
+        .limit(limit)
+    )
+    messages = result.scalars().all()
+    return {
+        "messages": [
+            {
+                "id": str(m.id),
+                "role": m.role,
+                "content": m.content,
+                "agent_used": m.agent_used,
+                "citations": json.loads(m.citations) if m.citations else [],
+                "agent_steps": json.loads(m.agent_steps) if getattr(m, "agent_steps", None) else [],
+                "created_at": m.created_at.isoformat(),
+            }
+            for m in messages
+        ],
+        "total": len(messages),
+    }
 
 
 @router.patch("/{conversation_id}")

@@ -1,60 +1,42 @@
-"""Structured JSON logging using structlog."""
+"""Structured logging — simple and compatible with Python 3.13."""
 import logging
 import sys
 from typing import Any
 
 import structlog
-from structlog.types import EventDict, Processor
 
 
-def add_app_info(
-    logger: logging.Logger,  # noqa: ARG001
-    method_name: str,  # noqa: ARG001
-    event_dict: EventDict,
-) -> EventDict:
-    """Inject app metadata into every log entry."""
-    event_dict["app"] = "nexusai"
-    return event_dict
-
-
-def setup_logging(log_level: str = "INFO", json_logs: bool = True) -> None:
+def setup_logging(log_level: str = "INFO", json_logs: bool = False) -> None:
     """Configure structlog for the application."""
-    shared_processors: list[Processor] = [
+    log_level_int = getattr(logging, log_level.upper(), logging.INFO)
+
+    processors = [
         structlog.contextvars.merge_contextvars,
         structlog.stdlib.add_log_level,
-        structlog.stdlib.add_logger_name,
-        structlog.processors.TimeStamper(fmt="iso"),
-        add_app_info,
+        structlog.processors.TimeStamper(fmt="%Y-%m-%d %H:%M:%S"),
         structlog.processors.StackInfoRenderer(),
     ]
 
     if json_logs:
-        processors: list[Processor] = shared_processors + [
-            structlog.processors.format_exc_info,
-            structlog.processors.JSONRenderer(),
-        ]
+        processors.append(structlog.processors.JSONRenderer())
     else:
-        processors = shared_processors + [
-            structlog.dev.ConsoleRenderer(colors=True),
-        ]
+        processors.append(structlog.dev.ConsoleRenderer(colors=False))
 
     structlog.configure(
         processors=processors,
-        wrapper_class=structlog.make_filtering_bound_logger(
-            logging.getLevelName(log_level)
-        ),
+        wrapper_class=structlog.make_filtering_bound_logger(log_level_int),
         logger_factory=structlog.PrintLoggerFactory(sys.stdout),
         cache_logger_on_first_use=True,
     )
 
-    # Also configure stdlib logging to route through structlog
+    # Also configure stdlib logging
     logging.basicConfig(
-        format="%(message)s",
+        format="%(levelname)-8s %(name)s: %(message)s",
         stream=sys.stdout,
-        level=logging.getLevelName(log_level),
+        level=log_level_int,
     )
 
 
 def get_logger(name: str) -> Any:
-    """Get a structlog logger instance."""
-    return structlog.get_logger(name)
+    """Get a structlog logger bound with a name key."""
+    return structlog.get_logger().bind(logger=name)

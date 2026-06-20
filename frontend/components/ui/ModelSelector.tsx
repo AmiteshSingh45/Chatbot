@@ -1,17 +1,16 @@
 "use client";
-/**
- * ModelSelector — Groq model picker with capability display.
- * Shows model name, speed, context window, and best-use capabilities.
- */
+
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { ChevronDown, Zap, Scale, Brain } from "lucide-react";
 import { GROQ_MODELS } from "@/types";
 import { useSettingsStore } from "@/store";
+import { cn } from "@/lib/utils";
 
-const SPEED_LABELS: Record<string, { label: string; color: string }> = {
-  fast: { label: "⚡ Fast", color: "text-emerald-400" },
-  balanced: { label: "⚖️ Balanced", color: "text-blue-400" },
-  slow: { label: "🧠 Deep", color: "text-purple-400" },
+const SPEED_CONFIG: Record<string, { label: string; icon: React.ElementType; color: string }> = {
+  fast:     { label: "Fast",     icon: Zap,   color: "#10b981" },
+  balanced: { label: "Balanced", icon: Scale,  color: "#3b82f6" },
+  slow:     { label: "Deep",     icon: Brain,  color: "#8b5cf6" },
 };
 
 interface ModelSelectorProps {
@@ -22,86 +21,113 @@ export default function ModelSelector({ className = "" }: ModelSelectorProps) {
   const { settings, updateSettings } = useSettingsStore();
   const [open, setOpen] = useState(false);
 
-  const currentModel =
-    GROQ_MODELS.find((m) => m.id === settings.model) || GROQ_MODELS[0];
-  const speed = SPEED_LABELS[currentModel.speed];
+  const current = GROQ_MODELS.find(m => m.id === settings.model) || GROQ_MODELS[0];
+  const speedCfg = SPEED_CONFIG[current.speed] || SPEED_CONFIG.balanced;
+  const SpeedIcon = speedCfg.icon;
 
   return (
-    <div className={`relative ${className}`}>
-      {/* Trigger */}
+    <div className={cn("relative", className)}>
       <button
         id="model-selector-trigger"
-        onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-2 rounded-xl px-3 py-1.5 text-sm
-                   border border-white/10 bg-white/5 hover:bg-white/10
-                   transition-all duration-200 text-white/80"
+        onClick={() => setOpen(v => !v)}
+        className={cn(
+          "flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-medium transition-all duration-150",
+          "border bg-[var(--bg-elevated)] hover:bg-[var(--bg-overlay)] border-[var(--border-subtle)] hover:border-[var(--border-default)]",
+          open && "border-violet-500/30 bg-violet-500/8"
+        )}
+        style={{ color: "var(--text-secondary)" }}
       >
-        <span className="text-xs">{speed.label.split(" ")[0]}</span>
-        <span className="font-medium">{currentModel.name}</span>
-        <svg
-          className={`h-3 w-3 text-white/40 transition-transform ${open ? "rotate-180" : ""}`}
-          fill="none" stroke="currentColor" viewBox="0 0 24 24"
-        >
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-        </svg>
+        <SpeedIcon className="w-3 h-3 flex-shrink-0" style={{ color: speedCfg.color }} />
+        <span className="max-w-[80px] truncate" style={{ color: "var(--text-primary)" }}>
+          {current.name.split(" ").slice(0, 2).join(" ")}
+        </span>
+        <ChevronDown
+          className={cn("w-3 h-3 flex-shrink-0 transition-transform duration-200", open && "rotate-180")}
+          style={{ color: "var(--text-muted)" }}
+        />
       </button>
 
-      {/* Dropdown */}
       <AnimatePresence>
         {open && (
           <>
             <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
             <motion.div
-              initial={{ opacity: 0, y: -8, scale: 0.97 }}
+              initial={{ opacity: 0, y: -6, scale: 0.97 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: -8, scale: 0.97 }}
-              transition={{ duration: 0.15 }}
-              className="absolute bottom-full left-0 mb-2 w-80 z-20 rounded-2xl overflow-hidden"
+              exit={{ opacity: 0, y: -6, scale: 0.97 }}
+              transition={{ duration: 0.14, ease: [0.4, 0, 0.2, 1] }}
+              className="absolute bottom-full left-0 mb-2 w-[300px] z-20 rounded-2xl overflow-hidden"
               style={{
-                background: "rgba(12,12,16,0.97)",
-                border: "1px solid rgba(255,255,255,0.08)",
+                background: "var(--bg-tertiary)",
+                border: "1px solid var(--border-default)",
                 backdropFilter: "blur(20px)",
-                boxShadow: "0 -20px 60px rgba(0,0,0,0.4)",
+                boxShadow: "var(--shadow-lg)",
               }}
             >
-              <div className="p-2 space-y-1">
-                {GROQ_MODELS.map((model) => {
+              <div className="p-1.5 space-y-0.5">
+                <p className="text-[10px] font-semibold uppercase tracking-widest px-3 py-2"
+                  style={{ color: "var(--text-muted)" }}>
+                  Select Model
+                </p>
+                {GROQ_MODELS.map(model => {
                   const active = model.id === settings.model;
-                  const spd = SPEED_LABELS[model.speed];
+                  const spd = SPEED_CONFIG[model.speed];
+                  const Icon = spd.icon;
 
                   return (
                     <button
                       key={model.id}
                       id={`model-option-${model.id}`}
-                      onClick={() => {
-                        updateSettings({ model: model.id });
-                        setOpen(false);
-                      }}
-                      className={`w-full text-left rounded-xl p-3 transition-all duration-150
-                                  ${active
-                                    ? "bg-purple-500/15 border border-purple-500/25"
-                                    : "hover:bg-white/5 border border-transparent"
-                                  }`}
+                      onClick={() => { updateSettings({ model: model.id }); setOpen(false); }}
+                      className={cn(
+                        "w-full text-left rounded-xl p-3 transition-all duration-150",
+                        active
+                          ? "bg-violet-500/12 border border-violet-500/20"
+                          : "border border-transparent hover:bg-[var(--bg-hover)]"
+                      )}
                     >
                       <div className="flex items-center justify-between mb-1">
-                        <span className={`font-semibold text-sm ${active ? "text-purple-300" : "text-white/90"}`}>
-                          {model.name}
+                        <div className="flex items-center gap-2">
+                          <Icon className="w-3.5 h-3.5" style={{ color: spd.color }} />
+                          <span
+                            className="font-semibold text-sm"
+                            style={{ color: active ? "var(--accent-purple-light)" : "var(--text-primary)" }}
+                          >
+                            {model.name}
+                          </span>
+                        </div>
+                        <span
+                          className="text-[10px] px-1.5 py-0.5 rounded-md font-medium"
+                          style={{ background: `${spd.color}15`, color: spd.color }}
+                        >
+                          {spd.label}
                         </span>
-                        <span className={`text-xs ${spd.color}`}>{spd.label}</span>
                       </div>
-                      <p className="text-xs text-white/40 mb-1.5">{model.description}</p>
+                      <p className="text-[11px] mb-1.5" style={{ color: "var(--text-muted)" }}>
+                        {model.description}
+                      </p>
                       <div className="flex flex-wrap gap-1">
-                        {model.capabilities.map((cap) => (
+                        {model.capabilities.map(cap => (
                           <span
                             key={cap}
-                            className="inline-block text-[10px] px-1.5 py-0.5 rounded-md
-                                       bg-white/5 text-white/40 border border-white/5"
+                            className="inline-block text-[10px] px-1.5 py-0.5 rounded-md"
+                            style={{
+                              background: "var(--bg-elevated)",
+                              color: "var(--text-tertiary)",
+                              border: "1px solid var(--border-faint)",
+                            }}
                           >
                             {cap}
                           </span>
                         ))}
-                        <span className="inline-block text-[10px] px-1.5 py-0.5 rounded-md
-                                         bg-white/5 text-white/30 border border-white/5 ml-auto">
+                        <span
+                          className="inline-block text-[10px] px-1.5 py-0.5 rounded-md ml-auto"
+                          style={{
+                            background: "var(--bg-elevated)",
+                            color: "var(--text-muted)",
+                            border: "1px solid var(--border-faint)",
+                          }}
+                        >
                           {(model.contextWindow / 1000).toFixed(0)}K ctx
                         </span>
                       </div>
